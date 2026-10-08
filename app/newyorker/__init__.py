@@ -1,0 +1,1 @@
+"""New Yorker upstream integration."""

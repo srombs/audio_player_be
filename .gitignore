@@ -1,0 +1,32 @@
+# Python and local tooling
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.uv-cache/
+build/
+dist/
+*.egg-info/
+.DS_Store
+
+# Configuration secrets and subscriber browser/session state
+.env
+.env.*
+!.env.example
+data/*
+!data/.gitkeep
+*.session.json
+*session*.json
+*storage-state*.json
+*storage_state*.json
+*cookies*.json
+playwright/.auth/
+auth.json
+# Temporary files from an interrupted atomic session write
+.*.json.*.tmp
+.*session*.tmp
+.*storage-state*.tmp
+.*storage_state*.tmp
+
+# Private, targeted subscription request/response capture
+*discovery-private.json

@@ -1,0 +1,27 @@
+[project]
+name = "newyorker-audio-backend"
+version = "0.1.0"
+description = "Authenticated New Yorker narrated-audio backend for Android"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi",
+    "httpx",
+    "playwright>=1.51",
+    "pydantic",
+    "pydantic-settings",
+    "uvicorn",
+]
+
+[dependency-groups]
+dev = ["pytest"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
