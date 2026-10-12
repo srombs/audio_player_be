@@ -25,6 +25,64 @@ Expected response:
 
 API documentation is available at `http://127.0.0.1:8000/docs`.
 
+## Docker
+
+Install Docker with a running engine, then build from the repository directory:
+
+```sh
+docker build -t newyorker-audio-backend .
+```
+
+The image installs Python 3.12 and runtime dependencies from `uv.lock`, and starts
+Uvicorn on `0.0.0.0:8000` without development reload. Its health check tests
+`/health`; it does not verify subscriber access. The build context excludes local
+data, credentials, environment files, and browser profiles. The image includes
+the Playwright Python dependency but no browser installation: perform interactive
+login/capture and verification discovery on your local machine.
+
+For local testing, mount your existing `data/` directory, which holds the saved
+session, verification rules, magazine index, and article caches:
+
+```sh
+mkdir -p data
+chmod 700 data
+docker run -d --name newyorker-audio-backend \
+  --user "$(id -u):$(id -g)" \
+  --publish 8000:8000 \
+  --mount "type=bind,source=$PWD/data,target=/app/data" \
+  newyorker-audio-backend
+```
+
+Using your host UID/GID lets the container read mode-600 session files and write
+caches without changing their ownership. The image defaults to UID/GID 10001;
+on a Linux server, either give that user ownership of the mounted directory and
+files, or use `--user` with the UID/GID of their owner. Keep the data directory at
+mode 700 and the credential files at mode 600. The mount is writable because the
+backend saves newly fetched issue lists and CLI sync results there.
+
+For a remote server, transfer `newyorker-session.json` and
+`http-verification.json` securely into its mounted data directory. You can also
+transfer the magazine index and article caches, or create them with the sync
+commands below. Copying saved credentials does not guarantee acceptance from a
+different network; check access from inside the container:
+
+```sh
+docker exec newyorker-audio-backend python -m app.newyorker.http_auth check
+docker exec newyorker-audio-backend python -m app.newyorker.archive sync
+docker exec newyorker-audio-backend python -m app.newyorker.issue sync --latest
+```
+
+Open `http://localhost:8000/health` or `/docs` on the host. From an Android phone
+on the same network, use `http://<host-LAN-IP>:8000`. The published port binds to
+all host interfaces; use it on a trusted testing network. The current API has no
+client authentication, so an internet deployment needs an access-controlled HTTPS
+entry point before exposing these subscriber-backed endpoints.
+
+Replace expired session files in the mounted directory after capturing a new
+session locally; the backend detects replacements on its next access check.
+Mounted data persists when the container is replaced. Configuration can be
+passed using Docker `--env` options with the existing `NY_AUDIO_` variables.
+
 ## Configuration
 
 Settings use the `NY_AUDIO_` environment-variable prefix. `NY_AUDIO_SESSION_STATE_PATH` defaults to `data/newyorker-session.json`; set it to another private, persistent path when needed. Configuration reads process environment variables rather than loading `.env` automatically.
