@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     auth_request_timeout_seconds: float = Field(default=10, gt=0, le=120)
 
     issue_articles_path: Path = Path("data/issue-articles")
+    audio_cache_path: Path = Path("data/article-audio")
     issue_page_capture_path: Path = Path("data/issue-pages")
     issue_index_path: Path = Path("data/newyorker-issues.json")
     session_state_path: Path = Path("data/newyorker-session.json")

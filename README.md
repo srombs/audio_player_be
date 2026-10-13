@@ -318,6 +318,69 @@ Both endpoints require verified subscriber access and return `Cache-Control: no-
 
 ## Audio resolution (step 5)
 
+### Playback API
+
+When the Android user selects an article to play, call `POST /articles/audio`
+with its `url` from the issue article list:
+
+```sh
+curl -X POST https://audioplayerbe-production.up.railway.app/articles/audio \
+  -H 'Content-Type: application/json' \
+  -d '{"url":"https://www.newyorker.com/magazine/2026/10/12/why-is-illness-so-hard-to-write-about"}'
+```
+
+A successful response has this shape (values below are illustrative):
+
+```json
+{
+  "article": {
+    "id": "article-id",
+    "title": "Article title",
+    "url": "https://www.newyorker.com/magazine/2026/10/12/article-slug",
+    "description": null,
+    "authors": ["Author name"]
+  },
+  "audio": {
+    "audio_id": "audio-id",
+    "duration_ms": 1630000,
+    "audio_url": "https://audio-resources.cnevids.com/audio/narrated/audio-id-example.mp3",
+    "content_type": "audio/mpeg",
+    "verified_at": "2026-10-12T21:00:00Z"
+  }
+}
+```
+
+Load `/issues/{issue_date}/articles` to display the issue without resolving its
+audio. On Play, submit the selected article URL, display a loading state, then
+give `audio.audio_url` to the Android player to stream directly. Use
+`audio.duration_ms` for duration. An explicit absence of narration returns HTTP
+200 with `audio: null`; show that narration is unavailable instead of starting
+playback. On HTTP 502, allow retry. On HTTP 403/503, follow the existing backend
+session recovery `detail.action`. An invalid or unsupported article URL returns
+HTTP 422 without fetching it.
+
+The endpoint verifies subscriber access before fetching and again before
+returning the result. Responses use `Cache-Control: no-store` to prevent HTTP
+caching; the backend separately saves successful results under
+`data/article-audio/`, keyed by the canonical article URL. Later calls reuse that
+result without fetching the article or contacting the player/CDN, while still
+requiring verified subscriber access. The cache persists across deployments when
+`/app/data` is on the Railway volume. `NY_AUDIO_AUDIO_CACHE_PATH` overrides its
+directory. Explicit `audio: null` results are cached too; errors are never cached.
+
+There is no automatic audio-cache expiration. If playback fails with an old URL,
+call the same endpoint with `{"url":"<article-url>","refresh":true}` to resolve
+again and replace the cache. A failed refresh returns an error and preserves the
+previous cached result. `audio.verified_at` records the original MP3 verification
+time; it is not updated by cache hits. The API does not create private article
+captures. Subscriber credentials and article body content are excluded from the
+response and are never sent to the media player/CDN. Re-resolve on a subsequent
+play attempt if the source becomes unavailable; MP3 URL lifetime is not assumed.
+The endpoint uses the existing shared backend subscriber session and currently
+has no client authentication, like the browsing endpoints.
+
+### CLI
+
 Resolve a narrated article through the verified subscriber session:
 
 ```sh
@@ -346,4 +409,4 @@ The live article capture confirmed narration under `transformed.article.relatedA
 
 Step 1 implements the project skeleton and `/health`. The health endpoint reports that the service is running; it does not establish or verify subscriber authentication.
 
-Step 2 provides local interactive browser login and saved-session checks. Actual sign-in requires the subscriber to complete the browser flow. Step 3 implements HTTP session reuse and browser-observed subscriber verification. Live verification succeeded on 2026-10-08: authentication, active subscriber status, and HTTP session reuse were confirmed, with a rejected invalid-signature control. Saved probes can be rechecked using `uv run python -m app.newyorker.http_auth check` without Chrome. Step 4 adds `/auth/status`, cached session verification, capture reload, and a shared article-access gate. Step 5 includes authenticated issue-index sync with resumable historical discovery, issue table-of-contents extraction, primary article metadata parsing, and narrated-audio resolution with MP3 verification. The complete audio CLI passed its live local check on 2026-10-08. Magazine and per-issue article lists are available through `/issues` and `/issues/{issue_date}/articles`; playback endpoints can be added when the app needs them.
+Step 2 provides local interactive browser login and saved-session checks. Actual sign-in requires the subscriber to complete the browser flow. Step 3 implements HTTP session reuse and browser-observed subscriber verification. Live verification succeeded on 2026-10-08: authentication, active subscriber status, and HTTP session reuse were confirmed, with a rejected invalid-signature control. Saved probes can be rechecked using `uv run python -m app.newyorker.http_auth check` without Chrome. Step 4 adds `/auth/status`, cached session verification, capture reload, and a shared article-access gate. Step 5 includes authenticated issue-index sync with resumable historical discovery, issue table-of-contents extraction, primary article metadata parsing, and narrated-audio resolution with MP3 verification. The complete audio CLI passed its live local check on 2026-10-08. Magazine and per-issue article lists are available through `/issues` and `/issues/{issue_date}/articles`; `POST /articles/audio` resolves a selected article for direct playback on demand.

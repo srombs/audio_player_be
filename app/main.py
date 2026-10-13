@@ -1,6 +1,7 @@
 """FastAPI service entry point."""
 
 from contextlib import asynccontextmanager
+import asyncio
 from typing import Literal
 
 from fastapi import FastAPI, Request
@@ -8,6 +9,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app.api.auth import router as auth_router
+from app.api.audio import router as audio_router
 from app.api.issues import router as issues_router
 from app.config import get_settings
 from app.newyorker.errors import SessionAccessDenied
@@ -18,6 +20,7 @@ from app.newyorker.session_service import SessionService
 async def lifespan(application: FastAPI):
     service = SessionService(get_settings())
     application.state.session_service = service
+    application.state.audio_cache_lock = asyncio.Lock()
     try:
         yield
     finally:
@@ -26,6 +29,7 @@ async def lifespan(application: FastAPI):
 
 app = FastAPI(title="New Yorker Audio Backend", version="0.1.0", lifespan=lifespan)
 app.include_router(auth_router)
+app.include_router(audio_router)
 app.include_router(issues_router)
 
 
