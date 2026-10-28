@@ -37,8 +37,8 @@ The image installs Python 3.12 and runtime dependencies from `uv.lock`, and star
 Uvicorn on `0.0.0.0:8000` without development reload. Its health check tests
 `/health`; it does not verify subscriber access. The build context excludes local
 data, credentials, environment files, and browser profiles. The image includes
-the Playwright Python dependency but no browser installation: perform interactive
-login/capture and verification discovery on your local machine.
+the Playwright Python dependency but no browser installation: capture your existing
+Chrome login and perform verification discovery on your local machine.
 
 For local testing, mount your existing `data/` directory, which holds the saved
 session, verification rules, magazine index, and article caches:
@@ -101,48 +101,25 @@ Offline browser tests use synthetic pages and require installed Chromium:
 NY_AUDIO_BROWSER_TESTS=1 uv run pytest tests/test_auth_browser.py
 ```
 
-## Interactive login (step 2)
+## Capture an existing Chrome login (step 2)
 
-Install the browser and make the dedicated session directory private:
+Use `auth open` to launch installed Google Chrome directly for manual sign-in. It uses a persistent dedicated login profile and does not launch through Playwright or enable its automation mode. The `login`, `capture`, and `check` commands attach to an already running Chrome session through its local remote-debugging endpoint. `login` is an alias for `capture`: finish signing in manually before running either command. Playwright's bundled Chromium installation is not needed for these commands.
+
+From the repository directory on macOS:
 
 ```sh
 uv sync
-uv run playwright install chromium
-mkdir -p data
-chmod 700 data
-uv run python -m app.newyorker.auth login
+uv run python -m app.newyorker.auth open
 ```
 
-Complete New Yorker sign-in yourself in the visible browser. Select **Keep me signed in** if available. Leave the browser open and return to the terminal: press Enter to verify and save, or type `cancel` to leave the existing session untouched. Ctrl-C and terminal EOF also cancel. No passwords are entered or saved by the command.
+Sign in manually, leave the window open, then run `uv run python -m app.newyorker.auth capture`. `open` returns immediately without attaching to Chrome, saving a backend session, or checking subscriber access. It reuses `login-browser-profile` beside the configured session file (default: `data/login-browser-profile`) so browser sign-in can persist across launches. It leaves existing profiles and session files intact. Regular Chrome can still be rejected by an identity provider; opening it this way does not guarantee Google sign-in will succeed.
 
-The command checks the rendered account profile for a populated email input or read-only email text beside an explicit email label, together with a visible Sign out control. Sign out alone is insufficient because the public account-page HTML contains it. Unrelated contact emails and hidden fields do not count. It then restores the captured New Yorker state in a fresh browser context and repeats the check before saving.
+`open --port 9223` selects another local debugging port; pass `--cdp-url http://127.0.0.1:9223` to subsequent capture/check/discovery commands. `open --chrome-path '/path/to/Google Chrome'` selects an installed Chrome executable at another location or on another operating system; the default executable path is for macOS.
 
-Verification errors identify whether the existing browser or the restored session failed, and report only boolean signals (account page, Sign out, email input, labelled email text). No email addresses or cookie values are printed. If verification fails, the existing session is preserved. An existing-browser failure may indicate a changed profile layout; a restored-session failure means the current browser passed but the captured New Yorker state did not restore login.
-
-Only cookies and HTTPS storage origins belonging to `newyorker.com` and its subdomains are retained, including IndexedDB. Google and other third-party session state is excluded. Writes use a mode-600 temporary file and atomic replacement. The session directory must have mode 700; existing directories are not automatically chmodded. For a custom `NY_AUDIO_SESSION_STATE_PATH`, create a dedicated private directory first and keep that location out of Git.
-
-To check that saved state still restores browser login without changing the file:
+If your Chrome window already has remote debugging enabled, leave it open and use the capture command below. A normally opened Chrome window cannot be attached to unless remote debugging was enabled when it started. To set up a dedicated window on macOS, run these commands yourself from the repository directory:
 
 ```sh
-uv run python -m app.newyorker.auth check
-```
-
-If needed, use an installed browser instead of Playwright Chromium:
-
-```sh
-uv run python -m app.newyorker.auth login --browser-channel chrome
-uv run python -m app.newyorker.auth check --browser-channel chrome
-```
-
-Each navigation and account verification defaults to a 30-second timeout, configurable with `--timeout-seconds`. Manual sign-in has no time limit. Re-run `login` to replace an expired session.
-
-### If Google says the browser may not be secure
-
-Google may reject sign-in from a browser controlled through automation, even when credentials are entered manually ([Google guidance](https://support.google.com/accounts/answer/7675428?hl=en)). `--browser-channel chrome` still launches Chrome through Playwright, so switching channels does not guarantee that Google sign-in will work. If your account supports New Yorker email/password sign-in, that is an alternative.
-
-For Google sign-in, try completing login in a separate Chrome window before attaching Playwright. From the repository directory, create a private, dedicated browser profile and launch installed Chrome yourself (macOS):
-
-```sh
+uv sync
 mkdir -p data/login-browser-profile
 chmod 700 data data/login-browser-profile
 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
@@ -158,11 +135,25 @@ Sign in manually and make sure you reach your New Yorker account. Do not run cap
 uv run python -m app.newyorker.auth capture
 ```
 
-The command attaches to the local debugging endpoint, checks the already established New Yorker login, filters out third-party session state, verifies restoration in a fresh context, and saves atomically. It does not close your Chrome window or its original context. A different loopback port can be supplied with `--cdp-url http://127.0.0.1:9223`.
+You can also use `uv run python -m app.newyorker.auth login`; it performs the same capture without opening a sign-in window or prompting for input. Select **Keep me signed in** during manual sign-in if available. No passwords are entered or saved by these commands.
 
-This is an alternative to Playwright-launched login, not a guaranteed remedy for Google's rejection. If Google still rejects the manually launched window, use a supported New Yorker direct sign-in method; the backend must not proceed without verified login.
+The command checks the existing session's rendered account profile for a populated email input or read-only email text beside an explicit email label, together with a visible Sign out control. Sign out alone is insufficient because the public account-page HTML contains it. Unrelated contact emails and hidden fields do not count. It then restores the captured New Yorker state in a temporary context inside the connected Chrome process and repeats the check before saving. This restoration check verifies that the exported session works independently of the original profile. It never closes your Chrome window, existing tabs, or original context.
 
-Close the dedicated Chrome window after capture. Its temporary profile contains browser session secrets, including any Google session established during manual sign-in; delete `data/login-browser-profile` after closing Chrome if you do not want to retain it. The exported backend session contains only New Yorker state. Keep the debugging endpoint local and use this dedicated profile rather than your everyday Chrome profile. [Chrome requires a non-default profile for remote debugging](https://developer.chrome.com/blog/remote-debugging-port).
+Verification errors identify whether the existing browser or the restored session failed, and report only boolean signals (account page, Sign out, email input, labelled email text). No email addresses or cookie values are printed. If connection or verification fails, the existing saved session is preserved; the command reports an error without launching a browser. Ctrl-C cancels capture.
+
+Only cookies and HTTPS storage origins belonging to `newyorker.com` and its subdomains are retained, including IndexedDB. Google and other third-party session state is excluded. Writes use a mode-600 temporary file and atomic replacement. The session directory must have mode 700; existing directories are not automatically chmodded. For a custom `NY_AUDIO_SESSION_STATE_PATH`, create a dedicated private directory first and keep that location out of Git.
+
+To check that saved state still restores browser login without changing the file, keep the debugging-enabled Chrome window open and run:
+
+```sh
+uv run python -m app.newyorker.auth check
+```
+
+This also attaches to Chrome and uses a temporary restoration context. To check saved subscriber access without any browser, use `uv run python -m app.newyorker.http_auth check` after discovery (below).
+
+All three `auth` commands accept `--cdp-url http://127.0.0.1:9223` for another loopback port and `--timeout-seconds` for connection, navigation, and account verification timeouts (default: 30 seconds). The former `--browser-channel` option has been removed. To replace an expired session, sign in manually in the existing Chrome window and rerun `capture` or `login`.
+
+Keep the window open if you need verification discovery next. You can close it afterward; HTTP checks and the backend do not need Chrome. Its dedicated profile contains browser session secrets, including any Google session established during manual sign-in; delete `data/login-browser-profile` after closing Chrome if you do not want to retain it. Keep the debugging endpoint local and use a dedicated profile rather than your everyday Chrome profile. [Chrome requires a non-default profile for remote debugging](https://developer.chrome.com/blog/remote-debugging-port).
 
 **Browser login is separate from subscriber entitlement.** New Yorker accounts can exist without an active linked subscription ([New Yorker FAQ](https://www.newyorker.com/about/faq)). Step 3 must verify subscriber access and reuse through httpx before article operations can proceed. Saving/restoring storage state follows the [Playwright authentication documentation](https://playwright.dev/python/docs/auth).
 
@@ -409,4 +400,4 @@ The live article capture confirmed narration under `transformed.article.relatedA
 
 Step 1 implements the project skeleton and `/health`. The health endpoint reports that the service is running; it does not establish or verify subscriber authentication.
 
-Step 2 provides local interactive browser login and saved-session checks. Actual sign-in requires the subscriber to complete the browser flow. Step 3 implements HTTP session reuse and browser-observed subscriber verification. Live verification succeeded on 2026-10-08: authentication, active subscriber status, and HTTP session reuse were confirmed, with a rejected invalid-signature control. Saved probes can be rechecked using `uv run python -m app.newyorker.http_auth check` without Chrome. Step 4 adds `/auth/status`, cached session verification, capture reload, and a shared article-access gate. Step 5 includes authenticated issue-index sync with resumable historical discovery, issue table-of-contents extraction, primary article metadata parsing, and narrated-audio resolution with MP3 verification. The complete audio CLI passed its live local check on 2026-10-08. Magazine and per-issue article lists are available through `/issues` and `/issues/{issue_date}/articles`; `POST /articles/audio` resolves a selected article for direct playback on demand.
+Step 2 opens regular installed Chrome for manual sign-in, captures an existing Chrome login, and checks saved sessions through the same running browser. Actual sign-in is completed manually before capture; Playwright attaches afterward. Step 3 implements HTTP session reuse and browser-observed subscriber verification. Live verification succeeded on 2026-10-08: authentication, active subscriber status, and HTTP session reuse were confirmed, with a rejected invalid-signature control. Saved probes can be rechecked using `uv run python -m app.newyorker.http_auth check` without Chrome. Step 4 adds `/auth/status`, cached session verification, capture reload, and a shared article-access gate. Step 5 includes authenticated issue-index sync with resumable historical discovery, issue table-of-contents extraction, primary article metadata parsing, and narrated-audio resolution with MP3 verification. The complete audio CLI passed its live local check on 2026-10-08. Magazine and per-issue article lists are available through `/issues` and `/issues/{issue_date}/articles`; `POST /articles/audio` resolves a selected article for direct playback on demand.

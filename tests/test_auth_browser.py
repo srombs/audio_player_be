@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock
 
-from app.newyorker.auth import check_saved_login, interactive_login, verify_browser_login
+from app.newyorker.auth import capture_login, check_saved_login, verify_browser_login
 from app.newyorker.session import SessionError, load_session
 
 SIGNED_IN = '<label>E-mail<input type="email" value="subscriber@example.test"></label><a href="#">Sign out</a>'
@@ -82,7 +82,7 @@ class BrowserAuthTests(unittest.TestCase):
         with self.assertRaises(SessionError):
             verify_browser_login(context, 300)
 
-    def test_login_save_and_reopen_against_cookie_gated_profile(self) -> None:
+    def test_capture_and_reopen_against_cookie_gated_profile(self) -> None:
         def new_context(**kwargs):
             context = self.browser.new_context(**kwargs)
 
@@ -96,18 +96,18 @@ class BrowserAuthTests(unittest.TestCase):
 
         browser_proxy = Mock()
         browser_proxy.new_context.side_effect = new_context
-
-        def complete_login(_):
-            self.browser.contexts[0].add_cookies([
-                {"name": "ny-test-session", "value": "synthetic", "domain": ".newyorker.com", "path": "/"},
-                {"name": "google-test-session", "value": "synthetic", "domain": ".google.com", "path": "/"},
-            ])
-            return ""
+        existing_context = new_context()
+        self.addCleanup(existing_context.close)
+        browser_proxy.contexts = [existing_context]
+        existing_context.add_cookies([
+            {"name": "ny-test-session", "value": "synthetic", "domain": ".newyorker.com", "path": "/"},
+            {"name": "google-test-session", "value": "synthetic", "domain": ".google.com", "path": "/"},
+        ])
 
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "session.json"
             with contextlib.redirect_stdout(io.StringIO()):
-                self.assertTrue(interactive_login(browser_proxy, path, 1000, prompt=complete_login))
+                capture_login(browser_proxy, path, 1000)
                 before = path.read_bytes()
                 check_saved_login(browser_proxy, path, 1000)
             self.assertEqual(path.read_bytes(), before)

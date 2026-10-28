@@ -1,9 +1,10 @@
-"""Interactive New Yorker login; subscriber entitlement is verified in step 3."""
+"""Open regular Chrome for manual sign-in, then attach to capture or check login."""
 
 import argparse
+import subprocess
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
 from app.newyorker.session import (
@@ -17,8 +18,9 @@ from app.newyorker.session import (
 if TYPE_CHECKING:
     from playwright.sync_api import Browser, BrowserContext
 
-SIGN_IN_URL = "https://www.newyorker.com/account/sign-in"
 ACCOUNT_URL = "https://www.newyorker.com/account/profile"
+SIGN_IN_URL = "https://www.newyorker.com/account/sign-in"
+DEFAULT_CHROME_PATH = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
 
 # Public profile HTML contains Sign out even without a session. Require a
 # populated, labelled account identity too. Return booleans, never email values.
@@ -112,31 +114,6 @@ def verify_browser_login(context: "BrowserContext", timeout_ms: int) -> None:
         page.close()
 
 
-def interactive_login(
-    browser: "Browser",
-    path: Path,
-    timeout_ms: int,
-    prompt: Callable[[str], str] = input,
-) -> bool:
-    """Save only after login and a separate-context restoration both succeed."""
-    prepare_session_directory(path)
-    context = browser.new_context(accept_downloads=False)
-    try:
-        page = context.new_page()
-        page.goto(SIGN_IN_URL, wait_until="domcontentloaded", timeout=timeout_ms)
-        print("Complete New Yorker sign-in in the browser. No credentials are entered by this command.")
-        print("If Google rejects this browser, use New Yorker email sign-in or the capture command.")
-        print("Select Keep me signed in if available. Leave the browser open.")
-        if prompt("Press Enter when signed in, or type cancel: ").strip().lower() != "":
-            print("Login cancelled; the previous session was preserved.")
-            return False
-
-        verify_and_save_login(browser, context, path, timeout_ms)
-        return True
-    finally:
-        context.close()
-
-
 def verify_and_save_login(
     browser: "Browser", context: "BrowserContext", path: Path, timeout_ms: int
 ) -> None:
@@ -213,30 +190,73 @@ def local_cdp_url(value: str) -> str:
     return value
 
 
+def debugging_port(value: str) -> int:
+    port = positive_seconds(value)
+    if port > 65535:
+        raise argparse.ArgumentTypeError("Port must be between 1 and 65535.")
+    return port
+
+
+def open_chrome(executable: Path, profile: Path, port: int) -> None:
+    """Start installed Chrome directly; attach only after the user signs in."""
+    executable = executable.expanduser()
+    if not executable.is_file():
+        raise SessionError("Installed Chrome was not found. Use --chrome-path to select its executable.")
+    prepare_session_directory(profile / "Local State")
+    subprocess.Popen(
+        [str(executable), "--remote-debugging-address=127.0.0.1",
+         f"--remote-debugging-port={port}", f"--user-data-dir={profile.resolve()}",
+         "--new-window", SIGN_IN_URL],
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    print("Requested a regular Chrome window using the persistent login profile.")
+    print("Finish signing in manually and leave Chrome open, then run:")
+    print(f"uv run python -m app.newyorker.auth capture --cdp-url http://127.0.0.1:{port}")
+
+
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Establish or check a local New Yorker browser session.")
+    parser = argparse.ArgumentParser(
+        description="Open regular Chrome for sign-in, or attach to capture or check New Yorker login."
+    )
     commands = parser.add_subparsers(dest="command", required=True)
+    open_command = commands.add_parser("open", help="Open installed Chrome for manual sign-in, without Playwright.")
+    open_command.add_argument("--chrome-path", type=Path, default=DEFAULT_CHROME_PATH,
+                              help="Installed Chrome executable (default: macOS Google Chrome).")
+    open_command.add_argument("--port", type=debugging_port, default=9222,
+                              help="Local remote-debugging port (default: 9222).")
     for name, help_text in (
-        ("login", "Sign in manually and securely replace saved browser state."),
-        ("check", "Reopen saved state and verify browser login without saving changes."),
+        ("login", "Capture an existing Chrome login (alias for capture); sign in manually first."),
+        ("check", "Verify saved state in connected Chrome without saving changes."),
         ("capture", "Capture a manual login from an existing local Chrome debugging session."),
     ):
         command = commands.add_parser(name, help=help_text)
-        if name == "capture":
-            command.add_argument("--cdp-url", type=local_cdp_url, default="http://127.0.0.1:9222",
-                                 help="Loopback Chrome debugging endpoint (default: http://127.0.0.1:9222).")
-        else:
-            command.add_argument("--browser-channel", choices=("chrome", "msedge"), default=None,
-                                 help="Use installed Chrome/Edge instead of Playwright Chromium.")
+        command.add_argument("--cdp-url", type=local_cdp_url, default="http://127.0.0.1:9222",
+                             help="Existing Chrome debugging endpoint (default: http://127.0.0.1:9222).")
         command.add_argument("--timeout-seconds", type=positive_seconds, default=30,
-                             help="Timeout for navigation and account checks, not manual login (default: 30).")
+                             help="Timeout for connection, navigation, and account checks (default: 30).")
     arguments = parser.parse_args(argv)
+
+    if arguments.command == "open":
+        try:
+            from app.config import get_settings
+
+            path = get_settings().session_state_path.expanduser()
+            prepare_session_directory(path)
+            open_chrome(arguments.chrome_path, path.parent / "login-browser-profile", arguments.port)
+            return 0
+        except SessionError as error:
+            print(str(error), file=sys.stderr)
+            return 1
+        except (OSError, ValueError):
+            print("Could not open Chrome. Check --chrome-path and the private session directory.", file=sys.stderr)
+            return 1
 
     try:
         from playwright.sync_api import Error as PlaywrightError, sync_playwright
         from app.config import get_settings
     except ImportError:
-        print("Dependencies are missing. Run uv sync, then uv run playwright install chromium.", file=sys.stderr)
+        print("Dependencies are missing. Run uv sync.", file=sys.stderr)
         return 1
 
     try:
@@ -244,25 +264,17 @@ def main(argv: list[str] | None = None) -> int:
         if arguments.command in ("login", "capture"):
             prepare_session_directory(path)
         else:
-            load_session(path)  # Fail before opening a browser if state is missing or malformed.
+            load_session(path)  # Fail before connecting if state is missing or malformed.
         with sync_playwright() as playwright:
-            if arguments.command == "capture":
-                browser = playwright.chromium.connect_over_cdp(
-                    arguments.cdp_url, timeout=arguments.timeout_seconds * 1000
-                )
+            browser = playwright.chromium.connect_over_cdp(
+                arguments.cdp_url, timeout=arguments.timeout_seconds * 1000
+            )
+            if arguments.command in ("login", "capture"):
                 capture_login(browser, path, arguments.timeout_seconds * 1000)
-                # Stop Playwright to disconnect. Do not close externally launched
-                # Chrome or the user's default browser context.
-                return 0
-            browser = playwright.chromium.launch(headless=False, channel=arguments.browser_channel)
-            try:
-                if arguments.command == "login":
-                    completed = interactive_login(browser, path, arguments.timeout_seconds * 1000)
-                    return 0 if completed else 130
+            else:
                 check_saved_login(browser, path, arguments.timeout_seconds * 1000)
-                return 0
-            finally:
-                browser.close()
+            # Stop Playwright to disconnect. Never close externally launched Chrome.
+            return 0
     except (KeyboardInterrupt, EOFError):
         print("Session operation cancelled; saved session was not changed.", file=sys.stderr)
         return 130
@@ -271,9 +283,10 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     except PlaywrightError:
         # Playwright exceptions may contain URLs with tokens; do not print them.
-        print("Browser operation failed. Install Chromium or select an installed browser channel. "
-              "For capture, make sure local Chrome is running with remote debugging enabled. "
-              "Check network access and keep the browser open. Saved session was not changed.", file=sys.stderr)
+        print("Could not connect to or verify the existing Chrome session. "
+              "Open Chrome with remote debugging enabled at --cdp-url, sign in manually, "
+              "and leave the window open. Check network access. "
+              "Saved session was not changed.", file=sys.stderr)
         return 1
     except (OSError, ValueError):
         print("Session configuration or file operation failed. Check the configured private path.", file=sys.stderr)
