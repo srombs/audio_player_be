@@ -386,9 +386,14 @@ duration source and number of media requests. After fixing access, storage,
 or upstream problems, rerun the same command: it fetches every article afresh,
 including previously successful articles. Saved progress is not a resume cache.
 
-Normal issue sync can currently replace enriched metadata; rerun this command
-after syncing until [ticket 03](.scratch/narration-durations/issues/03-preserve-narration-metadata-on-sync.md)
-is complete. Offline tests use synthetic metadata. Live subscriber coverage
+Normal issue sync retains positive durations and confirmed no-narration findings
+for matching canonical article URLs, even if fresh Listen hints disagree. It
+refreshes titles, bylines, order, and membership from the table of contents;
+new articles start with unknown durations, and removed articles stay removed.
+Old Listen hints without a duration are refreshed normally; missing badges
+remain unknown. A failed table-of-contents fetch, parse, or list save preserves
+the saved enriched list. Sync and browsing make no per-article duration or media
+requests. Offline tests use synthetic metadata. Live subscriber coverage
 and independent duration spot checks remain required before rollout, as
 described in the [release validation notes](.scratch/narration-durations/README.md#release-validation).
 

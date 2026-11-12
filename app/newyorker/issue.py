@@ -48,21 +48,32 @@ def approved_issue_url(value: str) -> str:
 
 async def sync_issue(service: SessionService, *, article_directory: Path, capture_directory: Path,
                      index_path: Path, url: str = LATEST_URL) -> IssueArticles:
-    if url != LATEST_URL and issue_url(url) is None:
+    target = issue_url(url)
+    if url != LATEST_URL and target is None:
         raise ParseError("Expected a valid magazine issue URL.")
     # Validate local output state before any upstream fetch or overwrite.
     index = read_index(index_path)
     html = await service.get_article(url)
     prepare_session_directory(index_path)
-    name = "latest" if url == LATEST_URL else issue_url(url)[1].isoformat()
+    name = target[1].isoformat() if target is not None else "latest"
     save_session(capture_directory / f"{name}-page-private.json", {"url": url, "html": html})
     issue = parse_issue_identity(html, url)
     previous = next((item for item in index.issues if item.url == issue.url), None) if index else None
     if issue.cover_image_url is None and previous is not None:
         issue = issue.model_copy(update={"cover_image_url": previous.cover_image_url})
     articles = parse_issue_articles(html, issue)
+    path = article_directory / f"{issue.issue_date.isoformat()}.json"
+    saved = read_issue_articles(path, issue)
+    saved_articles = {item.url: item for item in saved.articles} if saved else {}
+    for position, article in enumerate(articles):
+        old = saved_articles.get(article.url)
+        # Only positive durations and explicit absence come from article-page
+        # findings. A previous Listen hint must yield to the refreshed card.
+        if old is not None and (old.duration_ms is not None or old.audio_available is False):
+            articles[position] = article.model_copy(update={"duration_ms": old.duration_ms,
+                                                           "audio_available": old.audio_available})
     result = IssueArticles(issue=issue, fetched_at=datetime.now(timezone.utc), articles=articles)
-    save_session(article_directory / f"{issue.issue_date.isoformat()}.json", result.model_dump(mode="json"))
+    save_session(path, result.model_dump(mode="json"))
     known = {item.url: item for item in index.issues} if index else {}
     new_latest = not index or not index.issues or issue.issue_date > max(item.issue_date for item in index.issues)
     known[issue.url] = issue
