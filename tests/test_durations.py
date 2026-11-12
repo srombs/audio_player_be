@@ -90,6 +90,135 @@ def populate(*args):
     return command.main(["populate", *args])
 
 
+@pytest.mark.parametrize("selection", [["--latest"], ["--url", ISSUE.url]])
+def test_enriched_duration_survives_issue_sync_and_is_returned_by_browsing(duration_env, capsys, selection):
+    settings, _, _, pages, requests = duration_env
+    assert populate("--date", "2026-10-12") == 0
+    capsys.readouterr()
+    html = (Path(__file__).parent / "fixtures" / "issue_toc.html").read_text()
+    html = (html.replace("synthetic-story", "example-story")
+            .replace("<button>Listen</button>", "")
+            .replace("An Example &amp; a Story", "Updated headline")
+            .replace("By Example Author", "By Updated Author"))
+    target = "https://www.newyorker.com/magazine" if selection == ["--latest"] else ISSUE.url
+    pages[target] = html
+    requests.clear()
+
+    command = importlib.import_module("app.newyorker.issue")
+    assert command.main(["sync", *selection]) == 0
+    capsys.readouterr()
+    with TestClient(app) as client:
+        response = client.get("/issues/2026-10-12/articles")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["version"] == 1
+    assert data["fetched_at"] != "2026-11-11T00:00:00Z"
+    assert len(data["articles"]) == 3
+    article = data["articles"][0]
+    assert article["url"] == URL
+    assert article["title"] == "Updated headline"
+    assert article["byline"] == "By Updated Author"
+    assert article["section"] == "Reporting & Essays"
+    assert (article["audio_available"], article["duration_ms"]) == (True, 1440000)
+    assert all(a["duration_ms"] is None for a in data["articles"][1:])
+    assert [url for url in requests if "/api/" not in url] == [target]
+    assert not settings.audio_cache_path.exists()
+
+
+def test_sync_preserves_confirmed_absence_but_refreshes_hints_order_and_membership(duration_env, capsys):
+    _, path, saved, pages, requests = duration_env
+    no_audio, unknown, old_hint, removed, added = [ISSUE.url + "/" + slug for slug in (
+        "no-audio", "unknown", "old-hint", "removed", "added")]
+    saved["articles"] += [
+        {"title": "No audio", "url": no_audio},
+        {"title": "Unknown", "url": unknown},
+        {"title": "Old Listen hint", "url": old_hint, "audio_available": True},
+        {"title": "Same headline", "url": removed}]
+    save_session(path, saved)
+    pages[no_audio] = article_page(no_audio, None)
+    pages[unknown] = article_page(unknown, {})
+    pages[old_hint] = article_page(old_hint, {})
+    pages[removed] = article_page(removed, {"durationInMs": 60000})
+    assert populate("--date", "2026-10-12") == 2
+    report = json.loads(capsys.readouterr().err)
+    assert (report["narrated"], report["non_narrated"], report["unresolved"]) == (2, 1, 2)
+    pages[ISSUE.url] = f"""
+        <title>The New Yorker October 12, 2026 | The New Yorker</title>
+        <main><h2>Updated section</h2>
+        <article><a href="{no_audio}"><h3>Updated no audio</h3></a><button>Listen</button></article>
+        <article><a href="{added}"><h3>Same headline</h3></a><button>Listen</button></article>
+        <article><a href="{unknown}"><h3>Still unknown</h3></a></article>
+        <article><a href="{old_hint}"><h3>No longer badged</h3></a></article>
+        <article><a href="https://newyorker.com:443/magazine/2026/10/12/example-story/?source=test#top">
+        <h3>Updated narrated story</h3></a></article></main>
+    """
+    requests.clear()
+
+    command = importlib.import_module("app.newyorker.issue")
+    assert command.main(["sync", "--url", ISSUE.url]) == 0
+    capsys.readouterr()
+    with TestClient(app) as client:
+        response = client.get("/issues/2026-10-12/articles")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["version"] == 1
+    articles = data["articles"]
+    assert [a["url"] for a in articles] == [no_audio, added, unknown, old_hint, URL]
+    assert [a["title"] for a in articles] == [
+        "Updated no audio", "Same headline", "Still unknown", "No longer badged", "Updated narrated story"]
+    assert all(a["section"] == "Updated section" for a in articles)
+    assert [(a["audio_available"], a["duration_ms"]) for a in articles] == [
+        (False, None), (True, None), (None, None), (None, None), (True, 1440000)]
+    assert [url for url in requests if "/api/" not in url] == [ISSUE.url]
+
+
+@pytest.mark.parametrize("failure", ["upstream", "rejected", "layout", "wrong_issue", "write"])
+def test_failed_issue_refresh_preserves_enriched_list_and_api_output(duration_env, capsys, monkeypatch, failure):
+    settings, path, saved, pages, requests = duration_env
+    no_audio = ISSUE.url + "/no-audio"
+    saved["articles"].append({"title": "No audio", "url": no_audio})
+    save_session(path, saved)
+    pages[no_audio] = article_page(no_audio, None)
+    assert populate("--date", "2026-10-12") == 0
+    capsys.readouterr()
+    with TestClient(app) as client:
+        before = client.get("/issues/2026-10-12/articles").json()
+    list_before = path.read_bytes()
+    index_before = settings.issue_index_path.read_bytes()
+    if failure in ("upstream", "rejected"):
+        pages[ISSUE.url] = httpx.Response(500 if failure == "upstream" else 401, text="PRIVATE_FAILURE")
+    else:
+        html = (Path(__file__).parent / "fixtures" / "issue_toc.html").read_text()
+        if failure == "layout":
+            html = "<title>The New Yorker October 12, 2026 | The New Yorker</title><main>Unknown layout</main>"
+        elif failure == "wrong_issue":
+            html = html.replace("October 12, 2026", "October 5, 2026")
+        pages[ISSUE.url] = html
+    if failure == "write":
+        replace = os.replace
+
+        def fail_list_write(source, destination):
+            if destination == path:
+                raise OSError("PRIVATE_FILESYSTEM_FAILURE")
+            replace(source, destination)
+
+        monkeypatch.setattr(os, "replace", fail_list_write)
+    requests.clear()
+
+    command = importlib.import_module("app.newyorker.issue")
+    assert command.main(["sync", "--url", ISSUE.url]) == 2
+    captured = capsys.readouterr()
+    assert not captured.out
+    assert "PRIVATE" not in captured.err
+    assert path.read_bytes() == list_before
+    assert settings.issue_index_path.read_bytes() == index_before
+    with TestClient(app) as client:
+        response = client.get("/issues/2026-10-12/articles")
+    assert response.status_code == 200
+    assert response.json() == before
+    assert [url for url in requests if "/api/" not in url] == [ISSUE.url]
+
+
 def test_command_populates_legacy_saved_issue_and_api_returns_duration_without_playback(duration_env, capsys):
     settings, path, saved, _, requests = duration_env
     index_before = settings.issue_index_path.read_bytes()

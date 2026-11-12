@@ -1,7 +1,7 @@
 # Narration durations
 
 Tracker: local Markdown tickets in this repository.
-Status vocabulary: `ready-for-agent`; work starts when blocking tickets are complete.
+Status vocabulary: `ready-for-agent`, `complete`; work starts when blocking tickets are complete.
 
 Source: [agreed backend duration handoff](../../BACKEND_DURATION_HANDOFF.md).
 
@@ -17,7 +17,9 @@ scenarios. Opens locally without a server or network access.
 | [02: Preserve progress](issues/02-preserve-progress-on-incomplete-sweeps.md) | Partial success, preserved previous values, access failures, and coverage reports | 01 |
 | [03: Preserve metadata on sync](issues/03-preserve-narration-metadata-on-sync.md) | Enriched durations and narration findings survive normal issue sync | 01 |
 
-Start with 01. After it is complete, 02 and 03 can proceed independently.
+All three tickets are complete. Normal issue sync preserves saved positive
+durations and confirmed no-narration findings by canonical article URL while
+refreshing article details and membership. Live release validation remains below.
 
 ## Scope
 
