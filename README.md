@@ -303,9 +303,56 @@ curl http://127.0.0.1:8000/issues/2026-10-12/articles
 
 `GET /issues` returns `updated_at`, `history_complete`, and `issues`, sorted newest first. Each magazine has an `issue_date`, `label`, canonical `url`, and `cover_image_url` when available. Covers come from archive cards or the issue page; the rendered full cover is preferred over its cropped social preview. Missing covers are `null`, and previously saved cover URLs survive syncs that omit them. Rerun `uv run python -m app.newyorker.archive sync` to enrich existing archive records with covers. Optional `year` filtering uses the starting date of double issues. This serves the saved archive index; if it is missing, run archive sync first. `history_complete: false` means older magazines may still need historical sync.
 
-`GET /issues/{issue_date}/articles` returns that issue's metadata, the article-list fetch time, and its `articles`. Article entries include title, URL, section, and available author/byline, description, image, and narration hint. A saved list is returned immediately; a known issue without a saved list has its table of contents fetched through the subscriber session and saved for subsequent requests. Unknown issue dates return HTTP 404 and invalid dates return HTTP 422. These endpoints do not resolve audio or download full articles.
+`GET /issues/{issue_date}/articles` returns that issue's metadata, the article-list fetch time, and its `articles`. Article entries include title, URL, section, and available author/byline, description, image, and narration hint. Optional `duration_ms` is a positive integer in milliseconds when populated; unknown durations and confirmed non-audio articles return `null`. A saved list is returned immediately; a known issue without a saved list has its table of contents fetched through the subscriber session and saved for subsequent requests. Unknown issue dates return HTTP 404 and invalid dates return HTTP 422. Browsing does not discover per-article durations or resolve audio.
 
 Both endpoints require verified subscriber access and return `Cache-Control: no-store`. Missing/rejected/unverifiable sessions return HTTP 503 with the existing recovery action; an explicitly inactive subscription returns HTTP 403. Missing or invalid local index/list data returns a safe HTTP 503 error, and upstream retrieval failures return HTTP 502. An unavailable list is never reported as an empty successful result. Open `/docs` to inspect the response schemas and try the endpoints.
+
+## Populate durations for one saved issue
+
+With a working subscriber session, explicitly select an issue already in the
+local catalog with a saved article list:
+
+```sh
+uv run python -m app.newyorker.durations populate --date 2026-10-12
+```
+
+The date is required. If local data is missing, run archive sync and
+`uv run python -m app.newyorker.issue sync --url https://www.newyorker.com/magazine/2026/10/12`
+first. Invalid saved inputs fail before any upstream request or data mutation.
+The command uses `NY_AUDIO_ISSUE_INDEX_PATH` and `NY_AUDIO_ISSUE_ARTICLES_PATH`,
+with the same defaults as browsing and issue sync.
+
+Each run fetches fresh metadata for every saved article, including those
+without Listen badges, those with durations, and those previously confirmed
+without narration. It uses the existing verified subscriber access flow and
+checks primary article identity. A positive JSON integer in
+`relatedAudio.durationInMs` supplies the publisher's duration; explicit primary
+`relatedAudio: null` confirms no narration and clears any old duration. Missing
+or malformed metadata is unresolved. Playback caches are not used, and no
+narration permalink, player, CDN, or audio-file requests are made.
+
+A successful command exits zero and prints a JSON report, for example:
+
+```json
+{"issue_date":"2026-10-12","total_articles":3,"narrated":2,"non_narrated":1,"duration_source":"relatedAudio.durationInMs","media_requests":0}
+```
+
+The narrated/non-narrated counts represent fresh results from this run, and
+sum to the total articles. Results are saved atomically into the selected
+issue's article list. `GET /issues/2026-10-12/articles` then returns these
+durations before playback, retaining response version 1, article URLs, order,
+all articles, and the original table-of-contents fetch time. Playback still
+resolves on demand through `POST /articles/audio`.
+
+This first slice saves only a fully successful sweep. An unresolved article,
+access rejection, or fetch failure exits nonzero and preserves the previous
+saved list. Partial-progress recovery and detailed incomplete-sweep reporting
+are tracked in [ticket 02](.scratch/narration-durations/issues/02-preserve-progress-on-incomplete-sweeps.md).
+Normal issue sync can currently replace enriched metadata; rerun this command
+after syncing until [ticket 03](.scratch/narration-durations/issues/03-preserve-narration-metadata-on-sync.md)
+is complete. Offline tests use synthetic metadata. Live subscriber coverage
+and independent duration spot checks remain required before rollout, as
+described in the [release validation notes](.scratch/narration-durations/README.md#release-validation).
 
 ## Audio resolution (step 5)
 

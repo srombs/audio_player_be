@@ -188,7 +188,8 @@ def extract_article(state: dict, requested_url: str) -> Article:
                    authors=list(dict.fromkeys(authors)))
 
 
-def extract_related_audio(state: dict, requested_url: str) -> RelatedAudio | None:
+def primary_narration(state: dict, requested_url: str) -> dict | None:
+    """Distinguish explicit no narration from missing or malformed primary metadata."""
     primary = primary_article(state, requested_url)
     if "relatedAudio" not in primary:
         raise ParseError("Primary article has no explicit narration metadata field.")
@@ -197,10 +198,28 @@ def extract_related_audio(state: dict, requested_url: str) -> RelatedAudio | Non
         return None
     if not isinstance(related, dict):
         raise ParseError("Primary article narration metadata has an unsupported shape.")
+    return related
+
+
+def extract_related_audio(state: dict, requested_url: str) -> RelatedAudio | None:
+    related = primary_narration(state, requested_url)
+    if related is None:
+        return None
     try:
         return RelatedAudio.model_validate(related)
     except ValidationError as error:
         raise ParseError("Primary article narration metadata is incomplete or invalid.") from error
+
+
+def extract_narration_duration(state: dict, requested_url: str) -> int | None:
+    """Read publisher duration without requiring playback or media metadata."""
+    related = primary_narration(state, requested_url)
+    if related is None:
+        return None
+    duration = related.get("durationInMs")
+    if type(duration) is not int or duration <= 0:
+        raise ParseError("Primary article has no valid positive integer narration duration; duration is unresolved.")
+    return duration
 
 
 def class_has(node: Node, pattern: str) -> bool:
