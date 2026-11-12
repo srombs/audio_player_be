@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="An illustrated overview of the three narration-duration tickets: early duration metadata, partial-progress recovery, and preservation through issue sync.">
+  <title>Narration durations · Feature overview</title>
+  <style>
+    :root { color-scheme: light; --paper:#f6f5f0; --ink:#1d2938; --muted:#536071; --line:#d8ddd9; --green:#17654d; --green-bg:#e4f0e9; --amber:#88531b; --amber-bg:#fff0d8; --blue:#2a537f; --blue-bg:#e9eff7; --white:#fff; }
+    * { box-sizing:border-box; }
+    html { scroll-behavior:smooth; scroll-padding-top:24px; }
+    body { margin:0; background:var(--paper); color:var(--ink); font:16px/1.65 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+    a { color:var(--blue); text-underline-offset:3px; }
+    a:hover { text-decoration-thickness:2px; }
+    a:focus-visible,button:focus-visible { outline:3px solid #ae6309; outline-offset:4px; }
+    main { max-width:1160px; margin:auto; padding:42px 32px 64px; }
+    .eyebrow { font-size:12px; font-weight:750; letter-spacing:.13em; text-transform:uppercase; }
+    .topline { display:flex; justify-content:space-between; gap:20px; color:var(--muted); border-bottom:1px solid var(--line); padding-bottom:18px; }
+    .hero { padding:56px 0 32px; max-width:840px; }
+    h1 { font:normal clamp(42px,6.3vw,72px)/1.06 Georgia,serif; letter-spacing:-.04em; margin:18px 0 24px; }
+    .lead { font-size:21px; line-height:1.6; max-width:750px; }
+    .muted, .caption { color:var(--muted); }
+    .caption { font-size:13px; }
+    nav { display:flex; flex-wrap:wrap; gap:12px 24px; border-top:1px solid var(--line); border-bottom:1px solid var(--line); padding:16px 0; font-size:14px; }
+    section { margin-top:54px; }
+    h2 { font:normal 34px/1.2 Georgia,serif; letter-spacing:-.02em; margin:8px 0 16px; }
+    h3 { font-size:18px; line-height:1.4; margin:10px 0; }
+    p { margin:10px 0 18px; }
+    .grid { display:grid; gap:18px; }
+    .three { grid-template-columns:repeat(3,minmax(0,1fr)); }
+    .two { grid-template-columns:repeat(2,minmax(0,1fr)); }
+    .card { padding:25px; border:1px solid var(--line); border-radius:12px; background:var(--white); min-width:0; }
+    .card p:last-child { margin-bottom:0; }
+    .badge { display:inline-block; font-size:11px; font-weight:750; line-height:1.5; letter-spacing:.05em; padding:5px 9px; border-radius:5px; text-transform:uppercase; }
+    .done { color:var(--green); background:var(--green-bg); }
+    .planned { color:var(--amber); background:var(--amber-bg); }
+    .neutral { color:var(--blue); background:var(--blue-bg); }
+    .ticket-number { float:right; color:#738091; font:normal 32px/1 Georgia,serif; }
+    .note { padding:17px 21px; border-left:3px solid var(--blue); background:var(--blue-bg); margin-top:20px; border-radius:0 7px 7px 0; }
+    .note.warning { background:var(--amber-bg); border-color:#b1762a; }
+    .label { font-size:12px; font-weight:750; letter-spacing:.07em; text-transform:uppercase; color:var(--muted); }
+    .preview { border:1px solid var(--line); border-radius:10px; overflow:hidden; margin-top:18px; }
+    .preview-header { padding:15px 18px; background:#edf0ed; font-weight:650; font-size:14px; }
+    .story { display:flex; justify-content:space-between; gap:18px; align-items:center; padding:17px 18px; background:white; border-top:1px solid #e7e9e6; }
+    .story strong { display:block; font-size:15px; }
+    .story small { display:block; color:var(--muted); font-size:12px; }
+    .duration { flex-shrink:0; font-size:14px; font-variant-numeric:tabular-nums; color:var(--green); font-weight:700; }
+    .duration.unknown { color:var(--muted); font-weight:500; }
+    .flow { display:flex; gap:0; align-items:stretch; margin:24px 0 12px; }
+    .node { flex:1; background:white; border:1px solid var(--line); border-radius:9px; padding:19px 15px; min-width:0; }
+    .node strong { display:block; font-size:14px; margin-bottom:7px; }
+    .node p { font-size:13px; line-height:1.55; color:var(--muted); margin:0; }
+    .node.highlight { border-color:#81aa95; background:#edf5ef; }
+    .arrow { display:flex; align-items:center; justify-content:center; width:34px; flex-shrink:0; color:#6f7c8a; font-size:22px; }
+    .lane { margin-top:18px; }
+    .lane-title { display:flex; gap:10px; align-items:center; }
+    .table-wrap { overflow-x:auto; border:1px solid var(--line); border-radius:9px; margin-top:18px; background:white; }
+    table { width:100%; border-collapse:collapse; font-size:14px; }
+    th,td { padding:15px 17px; border-bottom:1px solid #e7e9e6; text-align:left; vertical-align:top; }
+    th { background:#edf0ed; font-weight:650; }
+    tr:last-child td { border-bottom:0; }
+    td small { display:block; color:var(--muted); margin-top:5px; }
+    code { font:13px/1.7 ui-monospace,SFMono-Regular,Consolas,monospace; overflow-wrap:anywhere; }
+    :not(pre)>code { padding:2px 5px; border-radius:4px; background:#e9eeeb; }
+    pre { background:#1d2938; color:#e6efed; padding:22px; border-radius:9px; overflow-x:auto; line-height:1.7; font-size:13px; }
+    pre code { overflow-wrap:normal; }
+    .tabs { display:flex; flex-wrap:wrap; gap:8px; margin:22px 0 16px; }
+    .tabs button { font:600 13px/1.4 system-ui,sans-serif; padding:10px 15px; border:1px solid #b8c3c0; border-radius:6px; color:var(--ink); background:var(--white); cursor:pointer; }
+    .tabs button[aria-pressed="true"] { background:var(--ink); border-color:var(--ink); color:white; }
+    .scenario { border:1px solid var(--line); border-radius:12px; padding:25px; background:white; }
+    .scenario h3 { margin-top:0; }
+    .outcome { padding:15px 18px; border-radius:8px; margin-top:14px; background:var(--green-bg); font-size:14px; }
+    .outcome.warning { background:var(--amber-bg); }
+    .bar { display:flex; height:15px; border-radius:4px; overflow:hidden; background:#e9ece9; margin:18px 0 10px; }
+    .bar span { min-width:0; }
+    .fresh { background:#3b8468; }.unresolved { background:#dcaa53; }.unattempted { background:#a7b0bb; }
+    .legend { display:flex; flex-wrap:wrap; gap:8px 22px; font-size:12px; color:var(--muted); }
+    .legend span::before { content:""; display:inline-block; width:9px; height:9px; border-radius:2px; background:var(--key); margin-right:7px; }
+    .stats { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin:22px 0; }
+    .stat { border-top:1px solid var(--line); padding-top:10px; font-size:12px; color:var(--muted); }
+    .stat strong { display:block; font:normal 28px/1.4 Georgia,serif; color:var(--ink); }
+    .sources { columns:2; column-gap:32px; padding-left:20px; font-size:14px; }
+    .sources li { margin-bottom:10px; break-inside:avoid; }
+    footer { border-top:1px solid var(--line); margin-top:40px; padding-top:20px; font-size:12px; color:var(--muted); }
+    [hidden] { display:none!important; }
+    @media(max-width:760px) {
+      main { padding:25px 20px 40px; }.hero { padding-top:32px; }.lead { font-size:18px; }
+      .three,.two { grid-template-columns:1fr; }.topline { flex-direction:column; gap:6px; }
+      .flow { flex-direction:column; }.arrow { width:auto; height:30px; transform:rotate(90deg); }
+      .sources { columns:1; }.stats { grid-template-columns:repeat(2,1fr); }h2 { font-size:29px; }
+      th,td { padding:12px; }nav { gap:10px 17px; }.card,.scenario { padding:20px; }
+    }
+    @media(prefers-reduced-motion:reduce) { html { scroll-behavior:auto; } }
+    @media print {
+      body { background:white; font-size:11px; }main { max-width:none; padding:0; }.hero { padding-top:20px; }h1 { font-size:40px; }
+      nav,.tabs { display:none!important; }section { margin-top:25px; }.card,.scenario,.flow,.table-wrap { break-inside:avoid; }
+      .scenario[hidden] { display:block!important; margin-top:15px; }pre { white-space:pre-wrap; background:#edf0ed; color:#1d2938; }
+      a { color:inherit; } .caption { font-size:10px; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="topline"><span class="eyebrow">Audio player / Backend feature notes</span><span class="caption">Snapshot: November 11, 2026 · main @ 79bf2c8</span></div>
+    <div class="hero">
+      <div class="eyebrow">Three tickets, one listening improvement</div>
+      <h1>Know the length.<br>Before you press play.</h1>
+      <p class="lead">Populate narration lengths for a saved New Yorker issue so phone and Android Auto clients can show how long an article takes before the listener starts it.</p>
+      <p class="muted">The backend supplies the metadata. The three tickets add discovery, protect completed work during failures, and keep those findings when an issue is refreshed.</p>
+    </div>
+    <nav aria-label="Overview sections"><a href="#tickets">The three tickets</a><a href="#before-after">Before / after</a><a href="#flow">How it flows</a><a href="#failures">Failure examples</a><a href="#sync">Sync examples</a><a href="#operate">Run it</a></nav>
+  </header>
+
+  <section id="tickets" aria-labelledby="tickets-title">
+    <div class="eyebrow">Delivery status</div><h2 id="tickets-title">One delivered. Two ready to build.</h2>
+    <div class="grid three">
+      <article class="card"><span class="ticket-number">01</span><span class="badge done">Complete</span><h3>Discover &amp; save durations</h3><p>Explicitly select one saved issue. Fetch every article’s fresh publisher metadata, save its narration length, and expose it in the browse API.</p><a href="issues/01-populate-saved-issue-durations.md">Read ticket 01 →</a></article>
+      <article class="card"><span class="ticket-number">02</span><span class="badge planned">Planned · ready for agent</span><h3>Keep partial progress</h3><p>Save successes as the sweep runs, retain old values when a lookup fails, and report exactly what was resolved, failed, or left unattempted.</p><a href="issues/02-preserve-progress-on-incomplete-sweeps.md">Read ticket 02 →</a></article>
+      <article class="card"><span class="ticket-number">03</span><span class="badge planned">Planned · ready for agent</span><h3>Keep findings through sync</h3><p>Refresh titles, bylines, and issue membership while retaining confirmed narration metadata for the same canonical articles.</p><a href="issues/03-preserve-narration-metadata-on-sync.md">Read ticket 03 →</a></article>
+    </div>
+    <p class="caption">Dependency: 01 → 02 and 03. With 01 complete, the remaining tickets can proceed independently.</p>
+    <div class="note warning"><strong>Current behavior:</strong> ticket 01 saves only after an entire sweep succeeds. A later failure leaves the previous saved list intact but loses this run’s new findings. Normal issue sync can still replace enriched metadata. Tickets 02 and 03 address those two gaps.</div>
+  </section>
+
+  <section id="before-after" aria-labelledby="before-title">
+    <div class="eyebrow">Listener experience</div><h2 id="before-title">Choose something that fits the time you have.</h2>
+    <p>For a 25-minute drive, an issue list with narration lengths makes it easier to choose an article. These are illustrative client views, not a shipped UI; displaying the new summary field is separate frontend work.</p>
+    <div class="grid two">
+      <article class="card"><div class="label">Before enrichment</div><h3>Lengths are unknown in the issue list.</h3><div class="preview"><div class="preview-header">October 12 issue · 3 articles</div><div class="story"><div><strong>A City After Dark</strong><small>Reporting · By Example Author</small></div><span class="duration unknown">—</span></div><div class="story"><div><strong>The Long Way Home</strong><small>Fiction · By Example Author</small></div><span class="duration unknown">—</span></div><div class="story"><div><strong>Across the Page</strong><small>Poetry · By Example Author</small></div><span class="duration unknown">—</span></div></div><p class="caption">Playback resolution can return a duration, but the unenriched summary has no length to show before play.</p></article>
+      <article class="card"><div class="label">After a successful ticket 01 sweep</div><h3>Lengths arrive with the article summaries.</h3><div class="preview"><div class="preview-header">October 12 issue · 3 articles</div><div class="story"><div><strong>A City After Dark</strong><small>Reporting · Narration available</small></div><span class="duration">24 min</span></div><div class="story"><div><strong>The Long Way Home</strong><small>Fiction · Narration available</small></div><span class="duration">41 min</span></div><div class="story"><div><strong>Across the Page</strong><small>Poetry · Confirmed no narration</small></div><span class="duration unknown">—</span></div></div><p class="caption">All three articles remain in the list. Hiding confirmed non-audio articles is a separate deferred feature.</p></article>
+    </div>
+    <h3 style="margin-top:28px">The API change behind that view</h3>
+    <p><code>GET /issues/2026-10-12/articles</code> returns the same response version and article identity, with an optional positive integer <code>duration_ms</code>. Below are excerpts for the same article; all example titles and values are synthetic.</p>
+    <div class="grid two"><div><div class="label">Before · legacy summary</div><pre><code>{
+  "title": "A City After Dark",
+  "url": "…/a-city-after-dark",
+  "audio_available": null
+}</code></pre></div><div><div class="label">After · enriched summary</div><pre><code>{
+  "title": "A City After Dark",
+  "url": "…/a-city-after-dark",
+  "audio_available": true,
+  "duration_ms": 1440000
+}</code></pre></div></div>
+    <p class="caption">1,440,000 milliseconds = 24 minutes. Current API serialization returns null for missing durations. Older saved summaries remain readable. Article order and table-of-contents fetch time are retained during enrichment.</p>
+  </section>
+
+  <section id="flow" aria-labelledby="flow-title">
+    <div class="eyebrow">System flow</div><h2 id="flow-title">Discover once per explicit run. Browse saved results.</h2>
+    <div class="lane"><div class="lane-title"><span class="badge done">01 · delivered</span><strong>Operator runs enrichment</strong></div>
+      <div class="flow" role="group" aria-label="Enrichment flow: validate local issue, verify subscriber access, fetch every article, save metadata">
+        <div class="node"><strong>1. Select &amp; validate</strong><p>Require one issue date, a local catalog entry, and a valid saved article list.</p></div><div class="arrow" aria-hidden="true">→</div>
+        <div class="node"><strong>2. Verify access</strong><p>Use the existing subscriber session. Missing local inputs fail before upstream requests.</p></div><div class="arrow" aria-hidden="true">→</div>
+        <div class="node"><strong>3. Check every article</strong><p>Fetch fresh primary article metadata, including prior results and articles without Listen badges.</p></div><div class="arrow" aria-hidden="true">→</div>
+        <div class="node highlight"><strong>4. Save the findings</strong><p>Read publisher duration or explicit no narration. Today, save atomically after full success.</p></div>
+      </div>
+    </div>
+    <div class="lane"><div class="lane-title"><span class="badge neutral">Browse &amp; play</span><strong>Listener opens the issue</strong></div>
+      <div class="flow" role="group" aria-label="Client flow: read issue API, show durations, resolve audio when play is selected">
+        <div class="node"><strong>GET issue articles</strong><p>Verify subscriber access and read the saved article list.</p></div><div class="arrow" aria-hidden="true">→</div>
+        <div class="node highlight"><strong>Show known lengths</strong><p>The client can format duration_ms before starting playback.</p></div><div class="arrow" aria-hidden="true">→</div>
+        <div class="node"><strong>On Play: resolve audio</strong><p>POST /articles/audio resolves the selected stream on demand.</p></div>
+      </div>
+    </div>
+    <div class="note"><strong>No media requests during enrichment.</strong> Durations come from <code>relatedAudio.durationInMs</code>, not audio-file measurement. Browsing does no per-article discovery. A browse cache miss may fetch the issue’s table of contents, but does not enrich its articles.</div>
+    <h3 style="margin-top:28px">Three different outcomes—not just “duration or nothing”</h3>
+    <div class="table-wrap"><table><thead><tr><th scope="col">Fresh primary metadata</th><th scope="col">Meaning</th><th scope="col">Saved result / action</th></tr></thead><tbody>
+      <tr><td><code>durationInMs: 1440000</code><small>Positive JSON integer</small></td><td>Confirmed narration, known length</td><td><code>audio_available: true</code><br><code>duration_ms: 1440000</code></td></tr>
+      <tr><td><code>relatedAudio: null</code><small>Explicitly present on the primary article</small></td><td>Confirmed no narration</td><td><code>audio_available: false</code><br><code>duration_ms: null</code><small>Clears a previous positive duration.</small></td></tr>
+      <tr><td>Missing/malformed field or invalid duration<small>Includes strings, booleans, fractions, zero, and negative values</small></td><td>Unresolved, not confirmed absence</td><td>Today: abort without saving this sweep.<br>Ticket 02: preserve prior value, report unresolved, continue.</td></tr>
+    </tbody></table></div>
+    <p class="caption">Primary article identity must match the requested article; recommendations and embedded unrelated articles do not supply the value. A missing Listen badge or a null duration alone never proves no narration.</p>
+  </section>
+
+  <section id="failures" aria-labelledby="failures-title">
+    <div class="eyebrow">Ticket 02 · planned behavior</div><h2 id="failures-title">A failed lookup should not undo good work.</h2>
+    <p>Example: three saved articles, A → B → C. A previously had no duration; B had 18 minutes; C had 30 minutes. Each run still checks every article afresh. Choose a scenario to compare the current implementation with ticket 02’s intended behavior.</p>
+    <div class="tabs" role="group" aria-label="Failure example"><button type="button" aria-pressed="true" aria-controls="scenario-mixed" data-scenario="mixed">One article fails</button><button type="button" aria-pressed="false" aria-controls="scenario-access" data-scenario="access">Subscriber access lost</button><button type="button" aria-pressed="false" aria-controls="scenario-none" data-scenario="none">Explicit no narration</button></div>
+    <div id="scenario-mixed" class="scenario" data-panel="mixed"><h3>B times out. A and C have fresh durations.</h3><div class="grid two"><div><div class="label">Current · ticket 01</div><p>A’s new 24-minute result stays in memory. B fails, execution stops, and C is not checked. The saved list remains unchanged.</p><div class="outcome warning">Saved: A unknown · B 18 min · C 30 min<br>Nonzero exit · no new findings saved</div></div><div><div class="label">After ticket 02 · intended</div><p>Save A’s 24 minutes immediately. Keep B’s previous 18 minutes and mark its lookup unresolved. Continue to C and save its fresh 41 minutes.</p><div class="outcome">Saved: A 24 min · B 18 min (preserved) · C 41 min<br>Nonzero exit · incomplete sweep, useful progress saved</div></div></div><div class="bar" role="img" aria-label="Planned report: 2 fresh narrated, 1 unresolved, zero unattempted"><span class="fresh" style="width:66.667%"></span><span class="unresolved" style="width:33.333%"></span></div><div class="legend"><span style="--key:#3b8468">2 fresh narrated</span><span style="--key:#dcaa53">1 unresolved</span><span style="--key:#a7b0bb">0 unattempted</span></div><p class="caption">Planned report: total 3 · attempted 3 · fresh non-narrated 0 · previous value preserved for B. Preserved values do not count as fresh successes.</p></div>
+    <div id="scenario-access" class="scenario" data-panel="access" hidden><h3>Subscriber access is rejected while checking B.</h3><div class="grid two"><div><div class="label">Current · ticket 01</div><p>A succeeds in memory. B encounters access rejection. The command stops and leaves the entire previously saved list intact.</p><div class="outcome warning">Saved: A unknown · B 18 min · C 30 min<br>Nonzero exit · A’s fresh work is lost</div></div><div><div class="label">After ticket 02 · intended</div><p>Retain A’s newly saved 24 minutes. Stop on access rejection, preserve B and C’s old values, and report the required reconnect or access action.</p><div class="outcome">Saved: A 24 min · B 18 min · C 30 min<br>Nonzero exit · C is explicitly unattempted</div></div></div><div class="bar" role="img" aria-label="Illustrative planned report: 1 fresh narrated, 1 unresolved at access rejection, 1 unattempted"><span class="fresh" style="width:33.333%"></span><span class="unresolved" style="width:33.333%"></span><span class="unattempted" style="width:33.333%"></span></div><div class="legend"><span style="--key:#3b8468">1 fresh narrated</span><span style="--key:#dcaa53">1 unresolved at stop</span><span style="--key:#a7b0bb">1 unattempted</span></div><p class="caption">Illustrative planned accounting when B’s lookup encounters rejection: total 3 · attempted 2 · fresh non-narrated 0. The final report format is not implemented. No interactive login runs inside this command.</p></div>
+    <div id="scenario-none" class="scenario" data-panel="none" hidden><h3>B explicitly reports no narration. A and C also resolve.</h3><div class="grid two"><div><div class="label">Current · ticket 01</div><p>Because all three lookups resolve, the completed sweep is saved. B’s old 18-minute duration is cleared: explicit no narration is a successful finding.</p><div class="outcome">Saved: A 24 min · B no narration · C 41 min<br>Exit 0 · fully resolved sweep</div></div><div><div class="label">After ticket 02 · intended</div><p>The final values are the same. Each success is saved as it happens, protecting completed results if the run is later interrupted.</p><div class="outcome">Saved: A 24 min · B no narration · C 41 min<br>Exit 0 · all three outcomes resolved</div></div></div><div class="bar" role="img" aria-label="3 freshly resolved outcomes: 2 narrated and 1 confirmed non-narrated"><span class="fresh" style="width:100%"></span></div><div class="legend"><span style="--key:#3b8468">3 fresh resolved outcomes</span><span style="--key:#dcaa53">0 unresolved</span><span style="--key:#a7b0bb">0 unattempted</span></div><p class="caption">Report: total 3 · attempted 3 · fresh narrated 2 · fresh non-narrated 1. A non-narrated article remains in the article list.</p></div>
+    <noscript><p class="note">Scenario switching requires JavaScript. The default example shows partial failure; the ticket also specifies stopping on subscriber rejection while preserving progress, and clearing an old duration on explicit no narration.</p></noscript>
+    <p class="caption">Ticket 02 also requires safe writes and progress preservation on interruption. Rerunning repeats every fresh lookup; saved progress is not a skip/resume cache.</p>
+  </section>
+
+  <section id="sync" aria-labelledby="sync-title">
+    <div class="eyebrow">Ticket 03 · planned behavior</div><h2 id="sync-title">A refreshed issue should remember its narration.</h2>
+    <p>Normal issue sync fetches the table of contents. That page supplies article cards and Listen hints, not authoritative narration lengths. Ticket 03 merges saved findings by canonical article identity while refreshing ordinary article details.</p>
+    <div class="flow" role="group" aria-label="Planned sync flow: read enriched list and refreshed contents, match canonical identities, save merged current membership">
+      <div class="node"><strong>Saved enriched list</strong><p>A: 24 min<br>B: confirmed no narration<br>D: 12 min</p></div><div class="arrow" aria-hidden="true">+</div>
+      <div class="node"><strong>Fresh table of contents</strong><p>A: revised title, no Listen badge<br>B: Listen hint<br>C: new article; D removed</p></div><div class="arrow" aria-hidden="true">→</div>
+      <div class="node highlight"><strong>Match, merge &amp; save</strong><p>A keeps 24 min and gets new title.<br>B keeps confirmed no narration.<br>C starts unknown; D stays removed.</p></div>
+    </div>
+    <div class="table-wrap"><table><thead><tr><th scope="col">Refresh example</th><th scope="col">Current sync · before 03</th><th scope="col">After ticket 03 · intended</th></tr></thead><tbody>
+      <tr><td>A: same canonical URL, revised title</td><td>Fresh title; saved 24-minute duration lost.</td><td>Fresh title; 24-minute duration retained.</td></tr>
+      <tr><td>B: confirmed no narration, fresh Listen hint</td><td>New table-of-contents hint can replace the finding.</td><td>Confirmed <code>false</code> and null duration retained; hint does not override the finding.</td></tr>
+      <tr><td>C: newly added article</td><td>New summary; duration unknown.</td><td>New summary; duration unknown. Availability may carry a table-of-contents hint.</td></tr>
+      <tr><td>D: removed from the issue</td><td>Removed.</td><td>Removed; old saved metadata never restores it.</td></tr>
+    </tbody></table></div>
+    <p class="caption">Matching follows canonical article identity, not title or list position. Legacy null availability remains unknown. A failed contents refresh must preserve the existing successful list; sync and browsing still do no per-article duration discovery.</p>
+  </section>
+
+  <section id="operate" aria-labelledby="operate-title">
+    <div class="eyebrow">Operator guide · available today</div><h2 id="operate-title">Select one saved issue, run, then browse.</h2>
+    <p>Prerequisites: a working subscriber session, an existing catalog entry, and that issue’s saved article list. Missing local data fails before upstream requests; the duration command does not sync or create issues.</p>
+    <pre><code># If this issue is not already indexed and saved:
+uv run python -m app.newyorker.archive sync
+uv run python -m app.newyorker.issue sync --url https://www.newyorker.com/magazine/2026/10/12
+
+# Run the explicit, one-issue sweep:
+uv run python -m app.newyorker.durations populate --date 2026-10-12
+
+# Read the enriched list from a running local server:
+curl http://127.0.0.1:8000/issues/2026-10-12/articles</code></pre>
+    <p class="label">Illustrative successful report · current schema</p>
+    <pre><code>{
+  "issue_date": "2026-10-12",
+  "total_articles": 3,
+  "narrated": 2,
+  "non_narrated": 1,
+  "duration_source": "relatedAudio.durationInMs",
+  "media_requests": 0
+}</code></pre>
+    <div class="stats"><div class="stat"><strong>1 issue</strong>Explicitly selected per run</div><div class="stat"><strong>Every article</strong>Fresh lookups on each run</div><div class="stat"><strong>0 media</strong>Requests during enrichment</div><div class="stat"><strong>Version 1</strong>Existing browse response version</div></div>
+    <p>Today, success returns exit <code>0</code>; metadata, fetch, or access failure returns <code>2</code>; cancellation returns <code>130</code>. Until ticket 03 ships, rerun enrichment after normal issue sync. Until ticket 02 ships, a failure requires another full run to save new findings.</p>
+    <div class="note warning"><strong>Validation still outstanding:</strong> ticket 01 records offline integration coverage using synthetic metadata. A working subscriber session must still be used to check a real saved issue’s coverage and failure reporting, with a small independent spot-check of actual narration lengths before rollout. Broad live coverage and publisher duration accuracy are not yet established.</div>
+  </section>
+
+  <section aria-labelledby="sources-title">
+    <div class="eyebrow">Traceability</div><h2 id="sources-title">Source notes</h2>
+    <p class="caption">This is a feature overview of the local tickets and implementation at the snapshot above. Planned examples illustrate acceptance criteria; they do not claim tickets 02 or 03 are implemented. Frontend views are conceptual. No live subscriber or media requests were used to prepare this document.</p>
+    <ul class="sources"><li><a href="README.md">Ticket index and release validation</a></li><li><a href="issues/01-populate-saved-issue-durations.md">01 · Populate saved issue durations</a></li><li><a href="issues/02-preserve-progress-on-incomplete-sweeps.md">02 · Preserve partial progress</a></li><li><a href="issues/03-preserve-narration-metadata-on-sync.md">03 · Preserve metadata on sync</a></li><li><a href="../../BACKEND_DURATION_HANDOFF.md">Agreed backend / Android handoff</a></li><li><a href="../../FOLLOW_UPS.md">Deferred article filtering</a></li><li><a href="../../app/newyorker/durations.py">Current enrichment command</a> · <a href="../../app/newyorker/parser.py">metadata parser</a></li><li><a href="../../app/newyorker/issue.py">Current issue sync</a> · <a href="../../app/api/issues.py">browse API</a></li><li><a href="../../app/models/article.py">Summary schema</a> · <a href="../../tests/test_durations.py">offline duration tests</a></li></ul>
+  </section>
+  <footer>Audio player backend · Standalone HTML, no external assets or network dependencies. Print to PDF to include all three failure scenarios.</footer>
+</main>
+<script>
+  const buttons = [...document.querySelectorAll('[data-scenario]')];
+  const panels = [...document.querySelectorAll('[data-panel]')];
+  buttons.forEach(button => button.addEventListener('click', () => {
+    buttons.forEach(item => item.setAttribute('aria-pressed', String(item === button)));
+    panels.forEach(panel => { panel.hidden = panel.dataset.panel !== button.dataset.scenario; });
+  }));
+</script>
+</body>
+</html>

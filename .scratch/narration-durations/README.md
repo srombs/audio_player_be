@@ -5,6 +5,10 @@ Status vocabulary: `ready-for-agent`; work starts when blocking tickets are comp
 
 Source: [agreed backend duration handoff](../../BACKEND_DURATION_HANDOFF.md).
 
+[HTML feature overview](overview.html): current and planned behavior across all
+three tickets, before/after examples, flow diagrams, and interactive failure
+scenarios. Opens locally without a server or network access.
+
 ## Tickets
 
 | Ticket | Delivers | Blocked by |
