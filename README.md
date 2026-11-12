@@ -337,20 +337,55 @@ narration permalink, player, CDN, or audio-file requests are made.
 A successful command exits zero and prints a JSON report, for example:
 
 ```json
-{"issue_date":"2026-10-12","total_articles":3,"narrated":2,"non_narrated":1,"duration_source":"relatedAudio.durationInMs","media_requests":0}
+{"issue_date":"2026-10-12","total_articles":1,"attempted":1,"narrated":1,"non_narrated":0,"unresolved":0,"not_attempted":0,"articles":[{"url":"https://www.newyorker.com/magazine/2026/10/12/example-story","title":"Example story","outcome":"narrated","preserved_previous":false}],"duration_source":"relatedAudio.durationInMs","media_requests":0}
 ```
 
 The narrated/non-narrated counts represent fresh results from this run, and
-sum to the total articles. Results are saved atomically into the selected
-issue's article list. `GET /issues/2026-10-12/articles` then returns these
+sum to the total articles on a fully resolved sweep. Each successful article
+update is saved atomically into the selected issue's article list before the
+next article is checked. `GET /issues/2026-10-12/articles` then returns these
 durations before playback, retaining response version 1, article URLs, order,
 all articles, and the original table-of-contents fetch time. Playback still
 resolves on demand through `POST /articles/audio`.
 
-This first slice saves only a fully successful sweep. An unresolved article,
-access rejection, or fetch failure exits nonzero and preserves the previous
-saved list. Partial-progress recovery and detailed incomplete-sweep reporting
-are tracked in [ticket 02](.scratch/narration-durations/issues/02-preserve-progress-on-incomplete-sweeps.md).
+Article-specific network failures, missing or malformed metadata, and invalid
+durations are reported as `unresolved`; the sweep continues with the next
+article. Failed lookups preserve that article's previous narration metadata,
+including a known duration or a previous no-narration result. Unknown values
+remain unknown. Successful updates remain available if later articles fail.
+
+An incomplete sweep prints its JSON report to stderr and exits 2. Subscriber
+access rejection stops further article requests and includes the existing
+`newyorker_session_*` error and `action` (such as `reconnect`); the command does
+not open an interactive login. A failed save stops the sweep and preserves the
+last successfully saved list. Ctrl-C during article processing also preserves
+completed progress, prints an incomplete report, and exits 130.
+
+Every report includes these coverage counts:
+
+| Field | Meaning |
+| --- | --- |
+| `total_articles` | All articles in the saved issue |
+| `attempted` | Article lookups started, including attempts blocked by the subscriber gate |
+| `narrated`, `non_narrated` | Fresh, successfully persisted results from this run |
+| `unresolved` | Attempted articles without a fresh, saved result |
+| `not_attempted` | Articles left unchecked because the sweep stopped |
+
+`attempted` equals `narrated + non_narrated + unresolved`; adding
+`not_attempted` gives `total_articles`. The `articles` array identifies each
+article by title and URL with its `outcome`. Unresolved outcomes include a
+safe `reason`. Unresolved and unattempted articles with older metadata have
+`preserved_previous: true` and `previous_metadata`, for example:
+
+```json
+{"url":"https://www.newyorker.com/magazine/2026/10/12/example-story","title":"Example story","outcome":"unresolved","preserved_previous":true,"previous_metadata":{"audio_available":true,"duration_ms":120000},"reason":"Article retrieval failed; duration is unresolved. Check session status and retry."}
+```
+
+Preserved values never count as fresh successes. Reports always identify the
+duration source and number of media requests. After fixing access, storage,
+or upstream problems, rerun the same command: it fetches every article afresh,
+including previously successful articles. Saved progress is not a resume cache.
+
 Normal issue sync can currently replace enriched metadata; rerun this command
 after syncing until [ticket 03](.scratch/narration-durations/issues/03-preserve-narration-metadata-on-sync.md)
 is complete. Offline tests use synthetic metadata. Live subscriber coverage

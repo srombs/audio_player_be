@@ -1,6 +1,8 @@
+import asyncio
 import base64
 import importlib
 import json
+import os
 from dataclasses import asdict
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -66,6 +68,10 @@ def duration_env(tmp_path, monkeypatch):
         assert signed_in, "Article pages require the verified subscriber session"
         assert str(request.url) in pages, "Unexpected article, table-of-contents, or media request"
         page = pages[str(request.url)]
+        if callable(page):
+            page = page()
+        if isinstance(page, BaseException):
+            raise page
         return page if isinstance(page, httpx.Response) else httpx.Response(200, text=page)
 
     original_init = httpx.AsyncClient.__init__
@@ -150,6 +156,147 @@ def test_every_run_refreshes_all_articles_in_order_including_previous_results_an
     article_requests = [url for url in requests if "/api/" not in url]
     assert article_requests == [URL, previously_narrated, previously_unnarrated] * 2
     assert other_issue.read_text() == "ANOTHER_ISSUE_MUST_NOT_CHANGE"
+
+
+@pytest.mark.parametrize("failure", [httpx.Response(500, text="PRIVATE_UPSTREAM_FAILURE"),
+                                   httpx.ReadTimeout("PRIVATE_CONNECTION_FAILURE")])
+def test_mixed_sweep_preserves_failed_values_and_retries_every_article(duration_env, capsys, failure):
+    _, path, saved, pages, requests = duration_env
+    urls = [URL] + [ISSUE.url + suffix for suffix in ("/old-duration", "/no-audio", "/unknown", "/fresh-no-audio")]
+    saved["articles"] += [
+        {"title": "Old duration", "url": urls[1], "audio_available": True, "duration_ms": 120000},
+        {"title": "No audio", "url": urls[2], "audio_available": False},
+        {"title": "Unknown", "url": urls[3]},
+        {"title": "Fresh no audio", "url": urls[4], "audio_available": True, "duration_ms": 60000}]
+    save_session(path, saved)
+    pages[urls[1]] = failure
+    pages[urls[2]] = article_page(urls[2], {"durationInMs": False})
+    pages[urls[3]] = article_page(urls[3], {})
+    pages[urls[4]] = article_page(urls[4], None)
+
+    assert populate("--date", "2026-10-12") == 2
+    captured = capsys.readouterr()
+    report = json.loads(captured.err)
+    assert not captured.out
+    assert (report["total_articles"], report["attempted"], report["narrated"], report["non_narrated"],
+            report["unresolved"], report["not_attempted"]) == (5, 5, 1, 1, 3, 0)
+    assert report["duration_source"] == "relatedAudio.durationInMs"
+    assert report["media_requests"] == 0
+    assert "PRIVATE" not in captured.err
+    failures = [item for item in report["articles"] if item["outcome"] == "unresolved"]
+    assert [item["url"] for item in failures] == urls[1:4]
+    assert [item["preserved_previous"] for item in failures] == [True, True, False]
+    assert failures[0]["previous_metadata"] == {"audio_available": True, "duration_ms": 120000}
+    assert failures[1]["previous_metadata"] == {"audio_available": False, "duration_ms": None}
+    with TestClient(app) as client:
+        data = client.get("/issues/2026-10-12/articles").json()
+    assert [a["url"] for a in data["articles"]] == urls
+    assert [(a["audio_available"], a["duration_ms"]) for a in data["articles"]] == [
+        (True, 1440000), (True, 120000), (False, None), (None, None), (False, None)]
+
+    for url in urls:
+        pages[url] = article_page(url, {"durationInMs": 240000})
+    assert populate("--date", "2026-10-12") == 0
+    report = json.loads(capsys.readouterr().out)
+    assert (report["attempted"], report["narrated"], report["unresolved"], report["not_attempted"]) == (5, 5, 0, 0)
+    assert [url for url in requests if "/api/" not in url] == urls * 2
+
+
+def test_access_rejection_preserves_visible_progress_and_stops_requests(duration_env, capsys):
+    _, path, saved, pages, requests = duration_env
+    rejected = ISSUE.url + "/rejected"
+    untouched = ISSUE.url + "/not-attempted"
+    saved["articles"] += [
+        {"title": "Rejected", "url": rejected, "audio_available": True, "duration_ms": 120000},
+        {"title": "Not attempted", "url": untouched, "audio_available": False}]
+    save_session(path, saved)
+
+    def reject_after_checking_progress():
+        with TestClient(app) as client:
+            articles = client.get("/issues/2026-10-12/articles").json()["articles"]
+        assert articles[0]["duration_ms"] == 1440000
+        return httpx.Response(401, text="PRIVATE_REJECTION")
+
+    pages[rejected] = reject_after_checking_progress
+    assert populate("--date", "2026-10-12") == 2
+    captured = capsys.readouterr()
+    report = json.loads(captured.err)
+    assert not captured.out
+    assert report["error"] == "newyorker_session_reconnect_required"
+    assert report["action"] == "reconnect"
+    assert (report["total_articles"], report["attempted"], report["narrated"], report["non_narrated"],
+            report["unresolved"], report["not_attempted"]) == (3, 2, 1, 0, 1, 1)
+    assert [item["outcome"] for item in report["articles"]] == ["narrated", "unresolved", "not_attempted"]
+    assert report["articles"][1]["previous_metadata"]["duration_ms"] == 120000
+    assert report["articles"][2]["previous_metadata"]["audio_available"] is False
+    assert "PRIVATE" not in captured.err
+    assert [url for url in requests if "/api/" not in url] == [URL, rejected]
+    with TestClient(app) as client:
+        articles = client.get("/issues/2026-10-12/articles").json()["articles"]
+    assert [a["duration_ms"] for a in articles] == [1440000, 120000, None]
+
+
+@pytest.mark.parametrize("interruption", [KeyboardInterrupt, asyncio.CancelledError])
+def test_interrupted_sweep_reports_and_keeps_completed_progress(duration_env, capsys, interruption):
+    _, path, saved, pages, requests = duration_env
+    interrupted = ISSUE.url + "/interrupted"
+    untouched = ISSUE.url + "/not-attempted"
+    saved["articles"] += [
+        {"title": "Interrupted", "url": interrupted, "audio_available": True, "duration_ms": 120000},
+        {"title": "Not attempted", "url": untouched}]
+    save_session(path, saved)
+    pages[interrupted] = interruption()
+
+    assert populate("--date", "2026-10-12") == 130
+    captured = capsys.readouterr()
+    report = json.loads(captured.err)
+    assert not captured.out
+    assert report["error"] == "duration_population_interrupted"
+    assert (report["total_articles"], report["attempted"], report["narrated"], report["unresolved"],
+            report["not_attempted"]) == (3, 2, 1, 1, 1)
+    assert [url for url in requests if "/api/" not in url] == [URL, interrupted]
+    with TestClient(app) as client:
+        articles = client.get("/issues/2026-10-12/articles").json()["articles"]
+    assert [a["duration_ms"] for a in articles] == [1440000, 120000, None]
+
+
+def test_failed_progress_write_preserves_last_saved_list_and_stops(duration_env, capsys, monkeypatch):
+    _, path, saved, pages, requests = duration_env
+    failed = ISSUE.url + "/write-failed"
+    untouched = ISSUE.url + "/not-attempted"
+    saved["articles"] += [
+        {"title": "Write failed", "url": failed, "audio_available": False},
+        {"title": "Not attempted", "url": untouched}]
+    save_session(path, saved)
+    pages[failed] = article_page(failed, {"durationInMs": 240000})
+    replace = os.replace
+    last_saved = []
+
+    def fail_second_article_write(source, destination):
+        if destination == path:
+            if last_saved:
+                raise OSError("PRIVATE_FILESYSTEM_FAILURE")
+            replace(source, destination)
+            last_saved.append(path.read_bytes())
+        else:
+            replace(source, destination)
+
+    monkeypatch.setattr(os, "replace", fail_second_article_write)
+    assert populate("--date", "2026-10-12") == 2
+    captured = capsys.readouterr()
+    report = json.loads(captured.err)
+    assert not captured.out
+    assert (report["total_articles"], report["attempted"], report["narrated"], report["unresolved"],
+            report["not_attempted"]) == (3, 2, 1, 1, 1)
+    assert "save" in report["articles"][1]["reason"]
+    assert "PRIVATE" not in captured.err
+    assert path.read_bytes() == last_saved[0]
+    assert not list(path.parent.glob("*.tmp"))
+    assert [url for url in requests if "/api/" not in url] == [URL, failed]
+    with TestClient(app) as client:
+        articles = client.get("/issues/2026-10-12/articles").json()["articles"]
+    assert [(a["audio_available"], a["duration_ms"]) for a in articles] == [
+        (True, 1440000), (False, None), (None, None)]
 
 
 @pytest.mark.parametrize("invalid", [True, False, "1440000", 1.5, 1440000.0, 0, -1, None])
