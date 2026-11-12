@@ -32,18 +32,58 @@ async def populate_durations(service: SessionService, issue_date: date) -> dict:
     if saved is None or not saved.articles:
         raise ParseError("No valid article list is saved for the selected issue. Run issue sync first.")
 
-    articles = []
+    outcomes: list[dict] = []
     for article in saved.articles:
-        html = await service.get_article(article.url)
-        duration = extract_narration_duration(extract_preloaded_state(html), article.url)
-        articles.append(article.model_copy(update={"duration_ms": duration, "audio_available": duration is not None}))
+        outcome = {"url": article.url, "title": article.title, "outcome": "not_attempted",
+                   "preserved_previous": article.audio_available is not None or article.duration_ms is not None}
+        if outcome["preserved_previous"]:
+            outcome["previous_metadata"] = {"audio_available": article.audio_available, "duration_ms": article.duration_ms}
+        outcomes.append(outcome)
 
-    result = saved.model_copy(update={"articles": articles})
-    save_session(path, result.model_dump(mode="json"))
-    narrated = sum(item.audio_available is True for item in articles)
-    return {"issue_date": issue_date.isoformat(), "total_articles": len(articles),
-            "narrated": narrated, "non_narrated": len(articles) - narrated,
-            "duration_source": "relatedAudio.durationInMs", "media_requests": 0}
+    stopped: dict = {}
+    for position, article in enumerate(saved.articles):
+        outcome = outcomes[position]
+        outcome["outcome"] = "unresolved"
+        try:
+            html = await service.get_article(article.url)
+            duration = extract_narration_duration(extract_preloaded_state(html), article.url)
+            articles = list(saved.articles)
+            articles[position] = article.model_copy(update={"duration_ms": duration, "audio_available": duration is not None})
+            result = saved.model_copy(update={"articles": articles})
+            save_session(path, result.model_dump(mode="json"))
+        except SessionAccessDenied as error:
+            outcome["reason"] = "Subscriber access is unavailable; duration is unresolved."
+            stopped = {"error": "newyorker_session_" + error.status, "action": error.action}
+            break
+        except ParseError:
+            outcome["reason"] = "Primary narration metadata is missing or invalid; duration is unresolved."
+            continue
+        except (UpstreamRequestFailed, UnsafeUpstreamURL):
+            outcome["reason"] = "Article retrieval failed; duration is unresolved. Check session status and retry."
+            continue
+        except SessionError:
+            outcome["reason"] = "Could not save duration progress; the previous article list was preserved."
+            stopped = {"error": "duration_population_failed", "action": "Check local storage and retry."}
+            break
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            outcome["reason"] = "Duration population was interrupted; duration is unresolved."
+            stopped = {"error": "duration_population_interrupted"}
+            break
+
+        saved = result
+        outcomes[position] = {"url": article.url, "title": article.title,
+                              "outcome": "narrated" if duration is not None else "non_narrated",
+                              "preserved_previous": False}
+
+    counts = {name: sum(item["outcome"] == name for item in outcomes)
+              for name in ("narrated", "non_narrated", "unresolved", "not_attempted")}
+    report = {"issue_date": issue_date.isoformat(), "total_articles": len(outcomes),
+              "attempted": len(outcomes) - counts["not_attempted"], **counts, "articles": outcomes,
+              "duration_source": "relatedAudio.durationInMs", "media_requests": 0}
+    if counts["unresolved"] or counts["not_attempted"]:
+        report["error"] = "duration_population_failed"
+    report.update(stopped)
+    return report
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -62,6 +102,9 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         report = asyncio.run(run())
+        if "error" in report:
+            print(json.dumps(report), file=sys.stderr)
+            return 130 if report["error"] == "duration_population_interrupted" else 2
         print(json.dumps(report))
         return 0
     except SessionAccessDenied as error:
