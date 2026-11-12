@@ -309,6 +309,9 @@ Both endpoints require verified subscriber access and return `Cache-Control: no-
 
 ## Populate durations for one saved issue
 
+See the [HTML feature overview](.scratch/narration-durations/overview.html) for
+the three-ticket roadmap, before/after examples, and flow diagrams.
+
 With a working subscriber session, explicitly select an issue already in the
 local catalog with a saved article list:
 
